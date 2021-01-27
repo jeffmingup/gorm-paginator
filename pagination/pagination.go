@@ -1,7 +1,9 @@
 package pagination
 
 import (
+	"context"
 	"math"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -31,9 +33,6 @@ type Paginator struct {
 func Paging(p *Param, result interface{}) *Paginator {
 	db := p.DB
 
-	if p.ShowSQL {
-		db = db.Debug()
-	}
 	if p.Page < 1 {
 		p.Page = 1
 	}
@@ -50,9 +49,9 @@ func Paging(p *Param, result interface{}) *Paginator {
 	var paginator Paginator
 	var count int64
 	var offset int
-
-	go countRecords(db, result, done, &count)
-
+	ctx, _ := context.WithTimeout(context.Background(), time.Second*10)
+	ctxDB := db.WithContext(ctx)
+	go countRecords(ctxDB, result, done, &count)
 	if p.Page == 1 {
 		offset = 0
 	} else {
