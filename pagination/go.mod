@@ -1,4 +1,4 @@
-module github.com/biezhi/gorm-paginator/pagination
+module github.com/jeffmingup/gorm-paginator/pagination
 
 go 1.14
 
