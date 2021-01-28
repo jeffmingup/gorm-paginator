@@ -4,7 +4,6 @@ import (
 	"context"
 	"gorm.io/gorm"
 	"math"
-	"sync"
 	"time"
 )
 
@@ -30,7 +29,7 @@ type Paginator struct {
 }
 
 // Paging 分页
-func Paging(p *Param, result interface{}) *Paginator {
+func Paging(p *Param, result interface{}) (*Paginator, error) {
 	db := p.DB
 
 	if p.Page < 1 {
@@ -48,17 +47,16 @@ func Paging(p *Param, result interface{}) *Paginator {
 	var paginator Paginator
 	var count int64
 	var offset int
-	var wg sync.WaitGroup
-
+	DBChannel := make(chan *gorm.DB, 1)
 	ctx, cancel := context.WithTimeout(db.Statement.Context, time.Second*6)
 	ctxDB := db.WithContext(ctx)
-	wg.Add(2)
 	go func() {
-		defer wg.Done()
-		ctxDB.Model(result).Count(&count)
+		result := ctxDB.Model(result).Count(&count)
+		DBChannel <- result
 		if count == 0 {
 			cancel()
 		}
+
 	}()
 
 	if p.Page == 1 {
@@ -68,11 +66,17 @@ func Paging(p *Param, result interface{}) *Paginator {
 	}
 	ctxDB2 := db.WithContext(ctx)
 	go func() {
-		defer wg.Done()
-		ctxDB2.Limit(p.PageSize).Offset(offset).Find(result)
+		result := ctxDB2.Limit(p.PageSize).Offset(offset).Find(result)
+		DBChannel <- result
 	}()
 
-	wg.Wait()
+	for i := 0; i < 2; i++ {
+		result := <-DBChannel
+		if result.Error != nil {
+			cancel()
+			return nil, result.Error
+		}
+	}
 
 	paginator.TotalRecord = count
 	paginator.Records = result
@@ -93,5 +97,5 @@ func Paging(p *Param, result interface{}) *Paginator {
 	} else {
 		paginator.NextPage = p.Page + 1
 	}
-	return &paginator
+	return &paginator, nil
 }
