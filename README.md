@@ -3,7 +3,7 @@
 ## Usage
 
 ```bash
-go get github.com/biezhi/gorm-paginator/pagination
+go get github.com/jeffmingup/gorm-paginator
 ```
 
 ```go
@@ -29,7 +29,7 @@ pagination.Pagging(&pagination.Param{
 r := gin.Default()
 r.GET("/", func(c *gin.Context) {
     page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-    limit, _ := strconv.Atoi(c.DefaultQuery("limit", "3"))
+    limit, _ := strconv.Atoi(c.DefaultQuery("page_size", "3"))
     var users []User
 
     paginator := pagination.Pagging(&pagination.Param{

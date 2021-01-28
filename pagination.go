@@ -1,19 +1,20 @@
-package pagination
+package gorm_paginator
 
 import (
 	"context"
 	"gorm.io/gorm"
 	"math"
+	"sync"
 	"time"
 )
 
 // Param 分页参数
 type Param struct {
-	DB      *gorm.DB
-	Page    int
-	Limit   int
-	OrderBy []string
-	ShowSQL bool
+	DB       *gorm.DB
+	Page     int
+	PageSize int
+	OrderBy  []string
+	ShowSQL  bool
 }
 
 // Paginator 分页返回
@@ -22,7 +23,7 @@ type Paginator struct {
 	TotalPage   int         `json:"total_page"`
 	Records     interface{} `json:"records"`
 	Offset      int         `json:"offset"`
-	Limit       int         `json:"limit"`
+	PageSize    int         `json:"page_size"`
 	Page        int         `json:"page"`
 	PrevPage    int         `json:"prev_page"`
 	NextPage    int         `json:"next_page"`
@@ -35,8 +36,8 @@ func Paging(p *Param, result interface{}) *Paginator {
 	if p.Page < 1 {
 		p.Page = 1
 	}
-	if p.Limit == 0 {
-		p.Limit = 10
+	if p.PageSize == 0 {
+		p.PageSize = 10
 	}
 	if len(p.OrderBy) > 0 {
 		for _, o := range p.OrderBy {
@@ -44,29 +45,42 @@ func Paging(p *Param, result interface{}) *Paginator {
 		}
 	}
 
-	done := make(chan bool, 1)
 	var paginator Paginator
 	var count int64
 	var offset int
-	ctx, _ := context.WithTimeout(context.Background(), time.Second*10)
+	var wg sync.WaitGroup
+
+	ctx, cancel := context.WithTimeout(db.Statement.Context, time.Second*6)
 	ctxDB := db.WithContext(ctx)
-	go countRecords(ctxDB, result, done, &count)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ctxDB.Model(result).Count(&count)
+		if count == 0 {
+			cancel()
+		}
+	}()
+
 	if p.Page == 1 {
 		offset = 0
 	} else {
-		offset = (p.Page - 1) * p.Limit
+		offset = (p.Page - 1) * p.PageSize
 	}
+	ctxDB2 := db.WithContext(ctx)
+	go func() {
+		defer wg.Done()
+		ctxDB2.Limit(p.PageSize).Offset(offset).Find(result)
+	}()
 
-	db.Limit(p.Limit).Offset(offset).Find(result)
-	<-done
+	wg.Wait()
 
 	paginator.TotalRecord = count
 	paginator.Records = result
 	paginator.Page = p.Page
 
 	paginator.Offset = offset
-	paginator.Limit = p.Limit
-	paginator.TotalPage = int(math.Ceil(float64(count) / float64(p.Limit)))
+	paginator.PageSize = p.PageSize
+	paginator.TotalPage = int(math.Ceil(float64(count) / float64(p.PageSize)))
 
 	if p.Page > 1 {
 		paginator.PrevPage = p.Page - 1
@@ -80,9 +94,4 @@ func Paging(p *Param, result interface{}) *Paginator {
 		paginator.NextPage = p.Page + 1
 	}
 	return &paginator
-}
-
-func countRecords(db *gorm.DB, anyType interface{}, done chan bool, count *int64) {
-	db.Model(anyType).Count(count)
-	done <- true
 }
