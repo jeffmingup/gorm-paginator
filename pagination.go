@@ -1,4 +1,4 @@
-package gorm_paginator
+package pagination
 
 import (
 	"context"
@@ -29,7 +29,7 @@ type Paginator struct {
 }
 
 // Paging 分页
-func Paging(p *Param, result interface{}) (*Paginator, error) {
+func Paging(p *Param, res interface{}) (*Paginator, error) {
 	db := p.DB
 
 	if p.Page < 1 {
@@ -44,14 +44,20 @@ func Paging(p *Param, result interface{}) (*Paginator, error) {
 		}
 	}
 
-	var paginator Paginator
+	paginator := Paginator{
+		PageSize: p.PageSize,
+		Page:     1,
+		PrevPage: 1,
+		NextPage: 1,
+		Records:  []interface{}{},
+	}
 	var count int64
 	var offset int
 	DBChannel := make(chan *gorm.DB, 1)
 	ctx, cancel := context.WithTimeout(db.Statement.Context, time.Second*6)
 	ctxDB := db.WithContext(ctx)
 	go func() {
-		result := ctxDB.Model(result).Count(&count)
+		result := ctxDB.Model(res).Count(&count)
 		DBChannel <- result
 		if count == 0 {
 			cancel()
@@ -66,35 +72,34 @@ func Paging(p *Param, result interface{}) (*Paginator, error) {
 	}
 	ctxDB2 := db.WithContext(ctx)
 	go func() {
-		result := ctxDB2.Limit(p.PageSize).Offset(offset).Find(result)
+		result := ctxDB2.Limit(p.PageSize).Offset(offset).Find(res)
 		DBChannel <- result
 	}()
 
 	for i := 0; i < 2; i++ {
 		result := <-DBChannel
 		if result.Error != nil {
-			paginator.Records = []interface{}{}
-			return &paginator, result.Error
+			if result.Error == context.Canceled { //如果是count查询为零则手动关闭，直接返回空列表
+				return &paginator, nil
+			} else {
+				cancel()
+				return nil, result.Error
+			}
+
 		}
 	}
 
 	paginator.TotalRecord = count
-	paginator.Records = result
+	paginator.Records = res
 	paginator.Page = p.Page
 
 	paginator.Offset = offset
-	paginator.PageSize = p.PageSize
 	paginator.TotalPage = int(math.Ceil(float64(count) / float64(p.PageSize)))
 
 	if p.Page > 1 {
 		paginator.PrevPage = p.Page - 1
-	} else {
-		paginator.PrevPage = p.Page
 	}
-
-	if p.Page == paginator.TotalPage {
-		paginator.NextPage = p.Page
-	} else {
+	if p.Page < paginator.TotalPage {
 		paginator.NextPage = p.Page + 1
 	}
 	return &paginator, nil
