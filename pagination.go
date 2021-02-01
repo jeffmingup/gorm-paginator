@@ -73,8 +73,8 @@ func Paging(p *Param, result interface{}) (*Paginator, error) {
 	for i := 0; i < 2; i++ {
 		result := <-DBChannel
 		if result.Error != nil {
-			cancel()
-			return nil, result.Error
+			paginator.Records = []interface{}{}
+			return &paginator, result.Error
 		}
 	}
 
