@@ -2,18 +2,19 @@ package pagination
 
 import (
 	"context"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"math"
+	"strconv"
 	"time"
 )
 
 // Param 分页参数
 type Param struct {
-	DB       *gorm.DB
-	Page     int
-	PageSize int
-	OrderBy  []string
-	ShowSQL  bool
+	DB         *gorm.DB
+	C          *gin.Context
+	ExistModel bool
+	OrderBy    []string
 }
 
 // Paginator 分页返回
@@ -31,12 +32,13 @@ type Paginator struct {
 // Paging 分页
 func Paging(p *Param, res interface{}) (*Paginator, error) {
 	db := p.DB
-
-	if p.Page < 1 {
-		p.Page = 1
+	page, _ := strconv.Atoi(p.C.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(p.C.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
 	}
-	if p.PageSize == 0 {
-		p.PageSize = 10
+	if pageSize == 0 {
+		pageSize = 10
 	}
 	if len(p.OrderBy) > 0 {
 		for _, o := range p.OrderBy {
@@ -45,7 +47,7 @@ func Paging(p *Param, res interface{}) (*Paginator, error) {
 	}
 
 	paginator := Paginator{
-		PageSize: p.PageSize,
+		PageSize: pageSize,
 		Page:     1,
 		PrevPage: 1,
 		NextPage: 1,
@@ -57,7 +59,13 @@ func Paging(p *Param, res interface{}) (*Paginator, error) {
 	ctx, cancel := context.WithTimeout(db.Statement.Context, time.Second*6)
 	ctxDB := db.WithContext(ctx)
 	go func() {
-		result := ctxDB.Model(res).Count(&count)
+		var result *gorm.DB
+		if p.ExistModel {
+			result = ctxDB.Count(&count)
+		} else {
+			result = ctxDB.Model(res).Count(&count)
+		}
+
 		DBChannel <- result
 		if count == 0 {
 			cancel()
@@ -65,14 +73,14 @@ func Paging(p *Param, res interface{}) (*Paginator, error) {
 
 	}()
 
-	if p.Page == 1 {
+	if page == 1 {
 		offset = 0
 	} else {
-		offset = (p.Page - 1) * p.PageSize
+		offset = (page - 1) * pageSize
 	}
 	ctxDB2 := db.WithContext(ctx)
 	go func() {
-		result := ctxDB2.Limit(p.PageSize).Offset(offset).Find(res)
+		result := ctxDB2.Limit(pageSize).Offset(offset).Find(res)
 		DBChannel <- result
 	}()
 
@@ -91,16 +99,16 @@ func Paging(p *Param, res interface{}) (*Paginator, error) {
 
 	paginator.TotalRecord = count
 	paginator.Records = res
-	paginator.Page = p.Page
+	paginator.Page = page
 
 	paginator.Offset = offset
-	paginator.TotalPage = int(math.Ceil(float64(count) / float64(p.PageSize)))
+	paginator.TotalPage = int(math.Ceil(float64(count) / float64(pageSize)))
 
-	if p.Page > 1 {
-		paginator.PrevPage = p.Page - 1
+	if page > 1 {
+		paginator.PrevPage = page - 1
 	}
-	if p.Page < paginator.TotalPage {
-		paginator.NextPage = p.Page + 1
+	if page < paginator.TotalPage {
+		paginator.NextPage = page + 1
 	}
 	return &paginator, nil
 }
